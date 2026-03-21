@@ -1,0 +1,183 @@
+"""Dead letter queue with pluggable backends (in-memory, file, custom)."""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Union
+
+
+@dataclass
+class DeadLetterEntry:
+    """Record of a failed call."""
+    function_name: str
+    args: tuple
+    kwargs: dict
+    error: str
+    error_type: str
+    timestamp: float
+    retry_count: int
+    total_wait_time: float
+
+
+class DeadLetterBackend:
+    """Base for dead letter backends."""
+
+    def write(self, entry: DeadLetterEntry) -> None:
+        raise NotImplementedError
+
+    def read_all(self) -> list[DeadLetterEntry]:
+        raise NotImplementedError
+
+
+class InMemoryBackend(DeadLetterBackend):
+    """In-memory dead letter queue."""
+
+    def __init__(self) -> None:
+        self._entries: list[DeadLetterEntry] = []
+        self._lock = threading.Lock()
+
+    def write(self, entry: DeadLetterEntry) -> None:
+        with self._lock:
+            self._entries.append(entry)
+
+    def read_all(self) -> list[DeadLetterEntry]:
+        with self._lock:
+            return list(self._entries)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+class FileBackend(DeadLetterBackend):
+    """File-based dead letter queue (JSONL format)."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    def write(self, entry: DeadLetterEntry) -> None:
+        data = {
+            "function_name": entry.function_name,
+            "args": entry.args,
+            "kwargs": entry.kwargs,
+            "error": entry.error,
+            "error_type": entry.error_type,
+            "timestamp": entry.timestamp,
+            "retry_count": entry.retry_count,
+            "total_wait_time": entry.total_wait_time,
+        }
+        with self._lock:
+            with open(self.path, "a") as f:
+                f.write(json.dumps(data, default=str) + "\n")
+
+    def read_all(self) -> list[DeadLetterEntry]:
+        entries: list[DeadLetterEntry] = []
+        if not self.path.exists():
+            return entries
+        with self._lock:
+            with open(self.path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        d = json.loads(line)
+                        entries.append(DeadLetterEntry(**{k: d[k] for k in DeadLetterEntry.__dataclass_fields__}))
+        return entries
+
+
+class DeadLetterQueue:
+    """Dead letter queue with pluggable backend.
+
+    Args:
+        backend: A backend instance, a "file:///path" string, or a callable.
+                 If callable, it receives a DeadLetterEntry dict.
+    """
+
+    def __init__(
+        self,
+        backend: Union[DeadLetterBackend, str, Callable[[dict], None], None] = None,
+    ) -> None:
+        if backend is None:
+            self._backend: DeadLetterBackend = InMemoryBackend()
+        elif isinstance(backend, str):
+            if backend.startswith("file://"):
+                path = backend[len("file://"):]
+                self._backend = FileBackend(path)
+            else:
+                self._backend = InMemoryBackend()
+        elif callable(backend) and not isinstance(backend, DeadLetterBackend):
+            # Wrap callable as backend
+            self._backend = _CallableBackend(backend)
+        else:
+            self._backend = backend
+
+    def record(
+        self,
+        function_name: str,
+        args: tuple,
+        kwargs: dict,
+        error: BaseException,
+        retry_count: int,
+        total_wait_time: float,
+    ) -> DeadLetterEntry:
+        """Record a failed call to the dead letter queue."""
+        entry = DeadLetterEntry(
+            function_name=function_name,
+            args=args,
+            kwargs=kwargs,
+            error=str(error),
+            error_type=type(error).__name__,
+            timestamp=time.time(),
+            retry_count=retry_count,
+            total_wait_time=total_wait_time,
+        )
+        self._backend.write(entry)
+        return entry
+
+    def read_all(self) -> list[DeadLetterEntry]:
+        return self._backend.read_all()
+
+
+class _CallableBackend(DeadLetterBackend):
+    def __init__(self, fn: Callable[[dict], None]) -> None:
+        self._fn = fn
+
+    def write(self, entry: DeadLetterEntry) -> None:
+        data = {
+            "function_name": entry.function_name,
+            "args": entry.args,
+            "kwargs": entry.kwargs,
+            "error": entry.error,
+            "error_type": entry.error_type,
+            "timestamp": entry.timestamp,
+            "retry_count": entry.retry_count,
+            "total_wait_time": entry.total_wait_time,
+        }
+        self._fn(data)
+
+    def read_all(self) -> list[DeadLetterEntry]:
+        return []
+
+
+def replay(path: str) -> list[Any]:
+    """Read dead letter entries from a file and attempt to replay them.
+
+    Note: Replay requires that the original functions are still available,
+    which is not generally possible from a dead letter entry. This is
+    primarily useful when entries are recorded with enough context to
+    reconstruct calls. Returns a list of results or exceptions.
+    """
+    backend = FileBackend(path)
+    entries = backend.read_all()
+    results: list[Any] = []
+    for entry in entries:
+        try:
+            results.append(("replay_not_implemented", entry.function_name))
+        except Exception as e:
+            results.append(e)
+    return results

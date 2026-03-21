@@ -1,0 +1,10 @@
+
+[all]
+aiohttp
+requests
+
+[dev]
+pytest>=7.0
+pytest-asyncio
+pytest-cov
+ruff
