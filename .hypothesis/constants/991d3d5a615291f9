@@ -1,0 +1,4 @@
+# file: /Volumes/Teja_T7_M4/clawd/retryly/src/retryly/jitter.py
+# hypothesis_version: 6.151.9
+
+[0.001, 0.1, 0.5, 0.9, 10000.0, 10000, 'decorrelated', 'default', 'equal', 'full', 'none']

@@ -1,0 +1,4 @@
+# file: /Volumes/Teja_T7_M4/clawd/retryly/src/retryly/errors.py
+# hypothesis_version: 6.151.9
+
+[429, 500, 502, 503, 504, 'Headers', 'Retry-After', 'X-RateLimit-Reset', 'cluster is down', 'connection.*refused', 'connection.*reset', 'could not connect', 'database is locked', 'disk i/o error', 'get', 'headers', 'interface error', 'loading.*error', 'operational error', 'read only', 'readonly', 'response', 'retry-after', 'status', 'status_code', 'temporary failure', 'too many connections']

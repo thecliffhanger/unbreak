@@ -1,0 +1,4 @@
+# file: /Volumes/Teja_T7_M4/clawd/retryly/src/retryly/circuit.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.2, 0.8, 2.0, 30.0, 'closed', 'half_open', 'open']

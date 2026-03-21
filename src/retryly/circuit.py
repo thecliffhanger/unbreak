@@ -174,20 +174,30 @@ class CircuitBreaker:
             if n < 5:
                 return False
 
-            if self._response_time_ema is None:
+            # Capture pre-update values for spike detection
+            old_ema = self._response_time_ema
+            old_var = self._response_time_var
+
+            if old_ema is None:
                 mean = sum(self._response_times) / n
-                self._response_time_ema = mean
+                old_ema = mean
                 var = sum((x - mean) ** 2 for x in self._response_times) / n
+                old_var = var
+                self._response_time_ema = mean
                 self._response_time_var = var
             else:
                 alpha = 0.2
-                delta = elapsed - self._response_time_ema
-                self._response_time_ema += alpha * delta
-                self._response_time_var = (1 - alpha) * (self._response_time_var + alpha * delta ** 2)
+                delta = elapsed - old_ema
+                self._response_time_ema = old_ema + alpha * delta
+                self._response_time_var = (1 - alpha) * (old_var + alpha * delta ** 2)
 
-            if self._response_time_var and self._response_time_var > 0:
-                std = math.sqrt(self._response_time_var)
-                if elapsed > self._response_time_ema + self.predictive_threshold * std:
+            if old_var is not None and old_var >= 0:
+                std = math.sqrt(old_var) if old_var > 0 else 0.0
+                if std == 0.0:
+                    # All prior observations were identical; any deviation is a spike
+                    if elapsed > old_ema:
+                        return True
+                elif elapsed > old_ema + self.predictive_threshold * std:
                     return True
         return False
 

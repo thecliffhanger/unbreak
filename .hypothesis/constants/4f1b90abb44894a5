@@ -1,0 +1,4 @@
+# file: /Volumes/Teja_T7_M4/clawd/retryly/src/retryly/backoff.py
+# hypothesis_version: 6.151.9
+
+[0.1, 0.3, 0.5, 1.0, 1.5, 2.0, 60.0, 'adaptive', 'count', 'ema', 'exponential', 'fixed']
