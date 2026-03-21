@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import time
@@ -14,7 +15,7 @@ from retryly.circuit import CircuitBreaker
 from retryly.dead_letter import DeadLetterQueue
 from retryly.errors import get_retry_after, is_retryable
 from retryly.events import EventDispatcher, EventType, RetryEvent
-from retryly.fallback import run_fallback_chain, run_fallback_chain_async
+from retryly.fallback import run_fallback_chain, run_fallback_chain_async, FallbackChainError
 from retryly.history import RetryHistory
 from retryly.jitter import apply_jitter, coordinated_jitter
 
@@ -27,7 +28,6 @@ class RetryResult:
         self._history = history
 
     def __getattr__(self, name: str) -> Any:
-        # Forward attribute access to the wrapped value
         if name in ("retries", "total_wait", "errors", "timeline", "elapsed"):
             return getattr(self._history, name)
         return getattr(self._value, name)
@@ -38,6 +38,20 @@ class RetryResult:
     @property
     def value(self) -> Any:
         return self._value
+
+
+class CircuitBreakerOpenError(Exception):
+    """Raised when the circuit breaker is open."""
+
+
+def _validate_fallbacks(fallbacks: Sequence[Callable[..., Any]] | None) -> None:
+    if fallbacks is None:
+        return
+    for i, fb in enumerate(fallbacks):
+        if not callable(fb):
+            raise TypeError(
+                f"Fallback at index {i} is not callable: {fb!r}"
+            )
 
 
 def retry(
@@ -60,30 +74,11 @@ def retry(
     smoothing: float = 0.3,
     wrap_result: bool = True,
 ) -> Callable:
-    """Retry decorator.
-
-    Args:
-        max: Maximum number of attempts (default 3). Ignored if budget is set.
-        backoff: Backoff strategy name or instance (default "exponential").
-        on: Tuple of exception types to catch. If None, uses smart error detection.
-        until: Predicate - retry while this returns False for the result.
-        jitter: Jitter mode: "equal", "full", "none", "decorrelated", or float.
-        jitter_key: Key for coordinated jitter.
-        circuit: Enable circuit breaker. Pass CircuitBreaker instance or True for defaults.
-        fallback: List of fallback functions to try after retries exhausted.
-        dead_letter: Dead letter queue config (path string, callable, or DeadLetterQueue).
-        budget: Time budget instead of max attempts (e.g., "30s").
-        on_event: Callback for retry events.
-        base: Base delay for exponential backoff.
-        factor: Factor for exponential backoff.
-        max_delay: Maximum delay between retries.
-        delay: Fixed delay for fixed backoff.
-        smoothing: EMA smoothing for adaptive backoff.
-        wrap_result: If True, wrap return value in RetryResult with metadata.
-    """
     backoff_strategy = get_backoff(backoff, base=base, factor=factor,
                                    max_delay=max_delay, delay=delay, smoothing=smoothing)
     is_adaptive = isinstance(backoff_strategy, AdaptiveBackoff)
+
+    _validate_fallbacks(fallback)
 
     cb: CircuitBreaker | None = None
     if circuit is True:
@@ -96,16 +91,18 @@ def retry(
         dlq = DeadLetterQueue(dead_letter) if not isinstance(dead_letter, DeadLetterQueue) else dead_letter
 
     dispatcher = EventDispatcher(on_event)
+    if cb is not None:
+        cb.set_dispatcher(dispatcher)
 
     budget_td: timedelta | None = None
     if budget is not None:
         budget_td = parse_budget(budget)
 
     def decorator(fn: Callable) -> Callable:
-        is_async = inspect.iscoroutinefunction(fn)
+        is_async_fn = inspect.iscoroutinefunction(fn)
         func_id = id(fn)
 
-        if is_async:
+        if is_async_fn:
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 return await _do_retry_async(
@@ -117,7 +114,7 @@ def retry(
         else:
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                return _do_retry(
+                return _do_retry_sync(
                     fn, args, kwargs, max, backoff_strategy, is_adaptive,
                     func_id, on, until, jitter, jitter_key, cb, fallback,
                     dlq, budget_td, dispatcher, wrap_result,
@@ -127,10 +124,49 @@ def retry(
     return decorator
 
 
-def _do_retry(
+def _should_retry_error(error: BaseException, on: tuple | None) -> bool:
+    if on is not None:
+        return isinstance(error, on)
+    return is_retryable(error)
+
+
+def _should_stop(attempt: int, max: int, bm: BudgetManager | None) -> bool:
+    if bm and bm.is_exhausted():
+        return True
+    return attempt >= max
+
+
+def _compute_wait(
+    backoff: BackoffStrategy, adaptive_backoff: AdaptiveBackoff | None,
+    func_id: int, attempt: int,
+    jitter: str | float | None, jitter_key: str | None,
+    bm: BudgetManager | None, error: BaseException | None,
+) -> float:
+    if bm and not bm.is_exhausted():
+        wait = bm.compute_wait(attempt)
+    elif adaptive_backoff:
+        wait = adaptive_backoff.compute_for(attempt, func_id)
+    else:
+        wait = backoff.compute(attempt)
+
+    if error is not None:
+        ra = get_retry_after(error)
+        if ra is not None:
+            wait = max(wait, ra)
+
+    if jitter_key:
+        wait = coordinated_jitter(wait, attempt, key=jitter_key)
+    elif jitter:
+        wait = apply_jitter(wait, jitter)
+
+    return wait
+
+
+def _do_retry_sync(
     fn, args, kwargs, max, backoff, is_adaptive, func_id,
     on, until, jitter, jitter_key, cb, fallback, dlq, budget_td, dispatcher, wrap_result,
 ):
+    """Synchronous retry loop."""
     history = RetryHistory()
     bm: BudgetManager | None = BudgetManager(budget_td) if budget_td else None
     adaptive_backoff: AdaptiveBackoff = backoff if is_adaptive else None  # type: ignore
@@ -138,10 +174,12 @@ def _do_retry(
     total_wait = 0.0
     last_error: BaseException | None = None
 
+    if bm:
+        bm.start()
+
     while True:
         attempt += 1
 
-        # Circuit breaker check
         if cb and not cb.allow():
             dispatcher.emit(RetryEvent(
                 type=EventType.CIRCUIT_OPEN, function_name=fn.__name__,
@@ -157,33 +195,21 @@ def _do_retry(
                 return RetryResult(result, history) if wrap_result else result
             raise err
 
-        # Budget check
-        if bm:
-            if bm.is_exhausted():
-                break
-            bm.start()
+        if bm and bm.is_exhausted():
+            break
 
         try:
             t0 = time.monotonic()
             result = fn(*args, **kwargs)
             elapsed = time.monotonic() - t0
 
-            # Record for adaptive backoff
             if adaptive_backoff:
                 adaptive_backoff.record_success(func_id, elapsed)
 
-            # Predictive circuit breaker
             if cb and cb.record_response_time(elapsed):
-                dispatcher.emit(RetryEvent(
-                    type=EventType.CIRCUIT_OPEN, function_name=fn.__name__,
-                    attempt=attempt, circuit_state=cb.state, error=None,
-                    extra={"reason": "predictive"},
-                ))
-                cb.record_failure(attempt)
+                cb.record_failure(attempt, fn_name=fn.__name__)
 
-            # `until` check
             if until and not until(result):
-                # Treat as a soft failure
                 dispatcher.emit(RetryEvent(
                     type=EventType.RETRY_ATTEMPT, function_name=fn.__name__,
                     attempt=attempt, error=None,
@@ -199,14 +225,8 @@ def _do_retry(
                 time.sleep(wait)
                 continue
 
-            # Success
             if cb:
-                cb.record_success()
-                if cb.state != cb.state.CLOSED:
-                    dispatcher.emit(RetryEvent(
-                        type=EventType.CIRCUIT_CLOSED, function_name=fn.__name__,
-                        attempt=attempt, circuit_state=cb.state,
-                    ))
+                cb.record_success(fn_name=fn.__name__)
             history.record(attempt, 0.0, None)
             cb_state = cb.state if cb else None
             dispatcher.emit(RetryEvent(
@@ -220,7 +240,7 @@ def _do_retry(
             should_retry = _should_retry_error(e, on)
 
             if cb and should_retry:
-                cb.record_failure(attempt)
+                cb.record_failure(attempt, fn_name=fn.__name__)
                 cb.record_attempt(attempt, False)
 
             if not should_retry or _should_stop(attempt, max, bm):
@@ -260,8 +280,8 @@ def _do_retry(
         try:
             result = run_fallback_chain(fallback, args, kwargs)
             return RetryResult(result, history) if wrap_result else result
-        except Exception:
-            pass
+        except FallbackChainError:
+            raise
 
     if last_error:
         raise last_error
@@ -272,13 +292,16 @@ async def _do_retry_async(
     fn, args, kwargs, max, backoff, is_adaptive, func_id,
     on, until, jitter, jitter_key, cb, fallback, dlq, budget_td, dispatcher, wrap_result,
 ):
-    import asyncio
+    """Asynchronous retry loop."""
     history = RetryHistory()
     bm: BudgetManager | None = BudgetManager(budget_td) if budget_td else None
     adaptive_backoff: AdaptiveBackoff = backoff if is_adaptive else None  # type: ignore
     attempt = 0
     total_wait = 0.0
     last_error: BaseException | None = None
+
+    if bm:
+        bm.start()
 
     while True:
         attempt += 1
@@ -298,10 +321,8 @@ async def _do_retry_async(
                 return RetryResult(result, history) if wrap_result else result
             raise err
 
-        if bm:
-            if bm.is_exhausted():
-                break
-            bm.start()
+        if bm and bm.is_exhausted():
+            break
 
         try:
             t0 = time.monotonic()
@@ -312,16 +333,16 @@ async def _do_retry_async(
                 adaptive_backoff.record_success(func_id, elapsed)
 
             if cb and cb.record_response_time(elapsed):
-                cb.record_failure(attempt)
+                cb.record_failure(attempt, fn_name=fn.__name__)
 
             if until and not until(result):
-                history.record(attempt, 0.0, None)
                 dispatcher.emit(RetryEvent(
                     type=EventType.RETRY_ATTEMPT, function_name=fn.__name__,
                     attempt=attempt, error=None,
                     extra={"reason": "until_condition_not_met"},
                 ))
                 if _should_stop(attempt, max, bm):
+                    history.record(attempt, 0.0, None)
                     break
                 wait = _compute_wait(backoff, adaptive_backoff, func_id, attempt,
                                      jitter, jitter_key, bm, last_error)
@@ -331,7 +352,7 @@ async def _do_retry_async(
                 continue
 
             if cb:
-                cb.record_success()
+                cb.record_success(fn_name=fn.__name__)
             history.record(attempt, 0.0, None)
             cb_state = cb.state if cb else None
             dispatcher.emit(RetryEvent(
@@ -345,7 +366,7 @@ async def _do_retry_async(
             should_retry = _should_retry_error(e, on)
 
             if cb and should_retry:
-                cb.record_failure(attempt)
+                cb.record_failure(attempt, fn_name=fn.__name__)
                 cb.record_attempt(attempt, False)
 
             if not should_retry or _should_stop(attempt, max, bm):
@@ -363,6 +384,7 @@ async def _do_retry_async(
             history.record(attempt, wait, e)
             await asyncio.sleep(wait)
 
+    # Exhausted
     dispatcher.emit(RetryEvent(
         type=EventType.RETRY_EXHAUSTED, function_name=fn.__name__,
         attempt=attempt, error=last_error,
@@ -384,55 +406,9 @@ async def _do_retry_async(
         try:
             result = await run_fallback_chain_async(fallback, args, kwargs)
             return RetryResult(result, history) if wrap_result else result
-        except Exception:
-            pass
+        except FallbackChainError:
+            raise
 
     if last_error:
         raise last_error
     raise RuntimeError(f"All {attempt} attempts failed for {fn.__name__}")
-
-
-def _should_retry_error(error: BaseException, on: tuple | None) -> bool:
-    """Determine if an error should trigger a retry."""
-    if on is not None:
-        return isinstance(error, on)
-    return is_retryable(error)
-
-
-def _should_stop(attempt: int, max: int, bm: BudgetManager | None) -> bool:
-    if bm and bm.is_exhausted():
-        return True
-    return attempt >= max
-
-
-def _compute_wait(
-    backoff: BackoffStrategy, adaptive_backoff: AdaptiveBackoff | None,
-    func_id: int, attempt: int,
-    jitter: str | float | None, jitter_key: str | None,
-    bm: BudgetManager | None, error: BaseException | None,
-) -> float:
-    """Compute wait time with backoff, jitter, and budget constraints."""
-    if bm and not bm.is_exhausted():
-        wait = bm.compute_wait(attempt)
-    elif adaptive_backoff:
-        wait = adaptive_backoff.compute_for(attempt, func_id)
-    else:
-        wait = backoff.compute(attempt)
-
-    # Check Retry-After
-    if error is not None:
-        ra = get_retry_after(error)
-        if ra is not None:
-            wait = max(wait, ra)
-
-    # Apply jitter
-    if jitter_key:
-        wait = coordinated_jitter(wait, attempt, key=jitter_key)
-    elif jitter:
-        wait = apply_jitter(wait, jitter)
-
-    return wait
-
-
-class CircuitBreakerOpenError(Exception):
-    """Raised when the circuit breaker is open."""

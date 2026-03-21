@@ -18,7 +18,8 @@ class TestFallbackChain:
             raise ValueError("e1")
         def fail2(*a, **kw):
             raise TypeError("e2")
-        with pytest.raises(TypeError, match="e2"):
+        from retryly.fallback import FallbackChainError
+        with pytest.raises(FallbackChainError):
             run_fallback_chain([fail1, fail2])
 
     def test_empty_raises(self):

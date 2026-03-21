@@ -10,6 +10,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from retryly.events import EventDispatcher, EventType, RetryEvent
+
 
 class CircuitState(enum.Enum):
     CLOSED = "closed"
@@ -52,6 +54,7 @@ class CircuitBreaker:
         self.predictive = predictive
         self.predictive_threshold = predictive_threshold
         self._lock = threading.Lock()
+        self._dispatcher = EventDispatcher()
 
         self._state = CircuitState.CLOSED
         self._window: deque[bool] = deque(maxlen=window_size)  # True=fail, False=success
@@ -67,6 +70,14 @@ class CircuitBreaker:
         self._attempt_fail_counts: dict[int, int] = {}
         self._attempt_total_counts: dict[int, int] = {}
 
+        # Timing stats
+        self._last_failure_time: Optional[float] = None
+        self._last_success_time: Optional[float] = None
+
+    def set_dispatcher(self, dispatcher: EventDispatcher) -> None:
+        """Set the event dispatcher for circuit state transition events."""
+        self._dispatcher = dispatcher
+
     @property
     def state(self) -> CircuitState:
         with self._lock:
@@ -79,6 +90,11 @@ class CircuitBreaker:
             if time.monotonic() - self._opened_at >= self.recovery_timeout:
                 self._state = CircuitState.HALF_OPEN
                 self._half_open_permits = 1
+                self._dispatcher.emit(RetryEvent(
+                    type=EventType.CIRCUIT_HALF_OPEN,
+                    function_name="",
+                    circuit_state=CircuitState.HALF_OPEN,
+                ))
 
     def _failures_in_window(self) -> int:
         return sum(1 for v in self._window if v)
@@ -96,20 +112,26 @@ class CircuitBreaker:
                 return False
             return False  # OPEN
 
-    def record_success(self) -> None:
+    def record_success(self, fn_name: str = "") -> None:
         with self._lock:
             self._maybe_transition()
             self._window.append(False)
+            self._last_success_time = time.monotonic()
+            old_state = self._state
             if self._state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.CLOSED
                 self._half_open_permits = 0
-            if self._state == CircuitState.OPEN:
-                # Shouldn't happen normally, but be safe
-                pass
+            if old_state != CircuitState.CLOSED and self._state == CircuitState.CLOSED:
+                self._dispatcher.emit(RetryEvent(
+                    type=EventType.CIRCUIT_CLOSED,
+                    function_name=fn_name,
+                    circuit_state=CircuitState.CLOSED,
+                ))
 
-    def record_failure(self, attempt: int = 1) -> None:
+    def record_failure(self, attempt: int = 1, fn_name: str = "") -> None:
         with self._lock:
             self._window.append(True)
+            self._last_failure_time = time.monotonic()
             if self._state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.OPEN
                 self._opened_at = time.monotonic()
@@ -117,49 +139,56 @@ class CircuitBreaker:
                 if self._failures_in_window() >= self._learned_threshold():
                     self._state = CircuitState.OPEN
                     self._opened_at = time.monotonic()
+                    self._dispatcher.emit(RetryEvent(
+                        type=EventType.CIRCUIT_OPEN,
+                        function_name=fn_name,
+                        circuit_state=CircuitState.OPEN,
+                    ))
 
     def _learned_threshold(self) -> int:
         """Adjust threshold based on retry pattern learning."""
         threshold = self.failure_threshold
-        # Find the attempt where most failures happen consistently
+        reduced = False
         for attempt_num, fails in self._attempt_fail_counts.items():
             totals = self._attempt_total_counts.get(attempt_num, 1)
             if totals >= 3 and fails / totals > 0.8:
-                # If most failures happen at a specific attempt, be more aggressive
-                threshold = max(2, threshold - 1)
+                if not reduced:
+                    threshold = max(2, threshold - 1)
+                    reduced = True
         return threshold
 
     def record_attempt(self, attempt: int, success: bool) -> None:
         """Record an attempt for pattern learning."""
-        self._attempt_total_counts[attempt] = self._attempt_total_counts.get(attempt, 0) + 1
-        if not success:
-            self._attempt_fail_counts[attempt] = self._attempt_fail_counts.get(attempt, 0) + 1
+        with self._lock:
+            self._attempt_total_counts[attempt] = self._attempt_total_counts.get(attempt, 0) + 1
+            if not success:
+                self._attempt_fail_counts[attempt] = self._attempt_fail_counts.get(attempt, 0) + 1
 
     def record_response_time(self, elapsed: float) -> bool:
         """Record response time for predictive analysis. Returns True if degraded."""
         if not self.predictive:
             return False
-        self._response_times.append(elapsed)
-        n = len(self._response_times)
-        if n < 5:
-            return False
+        with self._lock:
+            self._response_times.append(elapsed)
+            n = len(self._response_times)
+            if n < 5:
+                return False
 
-        # Update EMA and variance
-        if self._response_time_ema is None:
-            mean = sum(self._response_times) / n
-            self._response_time_ema = mean
-            var = sum((x - mean) ** 2 for x in self._response_times) / n
-            self._response_time_var = var
-        else:
-            alpha = 0.2
-            delta = elapsed - self._response_time_ema
-            self._response_time_ema += alpha * delta
-            self._response_time_var = (1 - alpha) * (self._response_time_var + alpha * delta ** 2)
+            if self._response_time_ema is None:
+                mean = sum(self._response_times) / n
+                self._response_time_ema = mean
+                var = sum((x - mean) ** 2 for x in self._response_times) / n
+                self._response_time_var = var
+            else:
+                alpha = 0.2
+                delta = elapsed - self._response_time_ema
+                self._response_time_ema += alpha * delta
+                self._response_time_var = (1 - alpha) * (self._response_time_var + alpha * delta ** 2)
 
-        if self._response_time_var and self._response_time_var > 0:
-            std = math.sqrt(self._response_time_var)
-            if elapsed > self._response_time_ema + self.predictive_threshold * std:
-                return True
+            if self._response_time_var and self._response_time_var > 0:
+                std = math.sqrt(self._response_time_var)
+                if elapsed > self._response_time_ema + self.predictive_threshold * std:
+                    return True
         return False
 
     def reset(self) -> None:
@@ -177,4 +206,6 @@ class CircuitBreaker:
                 consecutive_failures=self._failures_in_window(),
                 total_failures=sum(1 for v in self._window if v),
                 total_successes=sum(1 for v in self._window if not v),
+                last_failure_time=self._last_failure_time,
+                last_success_time=self._last_success_time,
             )

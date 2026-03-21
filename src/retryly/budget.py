@@ -12,7 +12,15 @@ def parse_budget(budget: Union[str, timedelta, float, int]) -> timedelta:
     """Parse a budget value into a timedelta.
 
     Accepts: timedelta, numeric (seconds), or string like '30s', '500ms', '1m'.
+    Raises ValueError for negative values.
     """
+    result = _parse_budget_raw(budget)
+    if result.total_seconds() < 0:
+        raise ValueError(f"Budget must be non-negative, got {budget!r}")
+    return result
+
+
+def _parse_budget_raw(budget: Union[str, timedelta, float, int]) -> timedelta:
     if isinstance(budget, timedelta):
         return budget
     if isinstance(budget, (int, float)):
@@ -61,22 +69,14 @@ class BudgetManager:
         return self.elapsed() >= self.total_seconds
 
     def compute_wait(self, attempt: int, max_attempts: int = 10) -> float:
-        """Compute wait time for *attempt*, distributing budget optimally.
-
-        Earlier attempts get shorter waits; later attempts get longer waits,
-        since we want to maximize total attempts within the budget.
-        """
+        """Compute wait time for *attempt*, distributing budget optimally."""
         if self.started_at is None:
             self.start()
         rem = self.remaining()
         if rem <= 0:
             return 0.0
-        # Give remaining attempts equal share, but weight later ones more
-        # Use exponential distribution: each attempt gets proportionally more
         remaining_attempts = max(1, max_attempts - attempt + 1)
-        # Share budget with bias toward longer waits for later attempts
-        share = rem / (remaining_attempts + 1)  # +1 to leave room
-        # Apply exponential growth to the share
+        share = rem / (remaining_attempts + 1)
         factor = 1.0 + (attempt - 1) * 0.5
         wait = min(share * factor, rem * 0.8)
         return max(0.001, wait)

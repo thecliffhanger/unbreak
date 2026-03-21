@@ -76,6 +76,11 @@ class TestReplay:
             dlq.record("fn", (), {}, ValueError("e"), 1, 0.0)
             results = replay(path)
             assert len(results) == 1
-            assert "replay_not_implemented" in str(results[0])
+            # Without registry, returns (function_name, None)
+            assert results[0] == ("fn", None)
+            # With registry, function is called
+            results2 = replay(path, registry={"fn": lambda: "replayed"})
+            assert len(results2) == 1
+            assert results2[0] == ("fn", "replayed")
         finally:
             os.unlink(path)

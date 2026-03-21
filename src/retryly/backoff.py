@@ -26,6 +26,8 @@ class FixedBackoff(BackoffStrategy):
     """
 
     def __init__(self, delay: float = 1.0) -> None:
+        if delay < 0:
+            raise ValueError(f"FixedBackoff delay must be >= 0, got {delay!r}")
         self.delay = delay
 
     def compute(self, attempt: int) -> float:
@@ -36,12 +38,18 @@ class ExponentialBackoff(BackoffStrategy):
     """Exponential backoff: base * factor^(attempt-1), capped at *max_delay*.
 
     Args:
-        base: Initial delay in seconds (default 0.5).
-        factor: Multiplier per attempt (default 2.0).
-        max_delay: Cap on delay (default 60.0).
+        base: Initial delay in seconds (default 0.5). Must be > 0.
+        factor: Multiplier per attempt (default 2.0). Must be > 0.
+        max_delay: Cap on delay (default 60.0). Must be >= 0.
     """
 
     def __init__(self, base: float = 0.5, factor: float = 2.0, max_delay: float = 60.0) -> None:
+        if base <= 0:
+            raise ValueError(f"ExponentialBackoff base must be > 0, got {base!r}")
+        if factor <= 0:
+            raise ValueError(f"ExponentialBackoff factor must be > 0, got {factor!r}")
+        if max_delay < 0:
+            raise ValueError(f"ExponentialBackoff max_delay must be >= 0, got {max_delay!r}")
         self.base = base
         self.factor = factor
         self.max_delay = max_delay

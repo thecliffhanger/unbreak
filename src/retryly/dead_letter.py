@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
+import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Union
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -82,11 +87,17 @@ class FileBackend(DeadLetterBackend):
             return entries
         with self._lock:
             with open(self.path) as f:
-                for line in f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if line:
-                        d = json.loads(line)
-                        entries.append(DeadLetterEntry(**{k: d[k] for k in DeadLetterEntry.__dataclass_fields__}))
+                        try:
+                            d = json.loads(line)
+                            # Convert lists back to tuples for args
+                            if "args" in d and isinstance(d["args"], list):
+                                d["args"] = tuple(d["args"])
+                            entries.append(DeadLetterEntry(**{k: d[k] for k in DeadLetterEntry.__dataclass_fields__}))
+                        except (json.JSONDecodeError, KeyError, TypeError) as e:
+                            logger.warning("Skipping corrupt JSONL line %d: %s", line_num, e)
         return entries
 
 
@@ -164,20 +175,32 @@ class _CallableBackend(DeadLetterBackend):
         return []
 
 
-def replay(path: str) -> list[Any]:
+def replay(
+    path: str,
+    registry: dict[str, Callable[..., Any]] | None = None,
+) -> list[tuple[str, Any | Exception]]:
     """Read dead letter entries from a file and attempt to replay them.
 
-    Note: Replay requires that the original functions are still available,
-    which is not generally possible from a dead letter entry. This is
-    primarily useful when entries are recorded with enough context to
-    reconstruct calls. Returns a list of results or exceptions.
+    Args:
+        path: Path to the JSONL dead letter file.
+        registry: Optional mapping of function names to callables. If a function
+                  name is in the registry, it will be called with the stored args/kwargs.
+                  If not in the registry, the entry is skipped.
+
+    Returns:
+        List of (function_name, result_or_error) tuples.
     """
     backend = FileBackend(path)
     entries = backend.read_all()
-    results: list[Any] = []
+    results: list[tuple[str, Any | Exception]] = []
     for entry in entries:
-        try:
-            results.append(("replay_not_implemented", entry.function_name))
-        except Exception as e:
-            results.append(e)
+        if registry and entry.function_name in registry:
+            fn = registry[entry.function_name]
+            try:
+                result = fn(*entry.args, **entry.kwargs)
+                results.append((entry.function_name, result))
+            except Exception as e:
+                results.append((entry.function_name, e))
+        else:
+            results.append((entry.function_name, None))
     return results

@@ -6,6 +6,15 @@ import inspect
 from typing import Any, Callable, Sequence
 
 
+class FallbackChainError(Exception):
+    """Raised when all fallbacks in a chain fail."""
+
+    def __init__(self, fallback_errors: list[Exception]) -> None:
+        self.fallback_errors = fallback_errors
+        names = [type(e).__name__ for e in fallback_errors]
+        super().__init__(f"All {len(fallback_errors)} fallback(s) failed: {', '.join(names)}")
+
+
 async def run_fallback_chain_async(
     fallbacks: Sequence[Callable[..., Any]],
     args: tuple = (),
@@ -13,7 +22,7 @@ async def run_fallback_chain_async(
 ) -> Any:
     """Run fallback functions in order (async version). Returns first success."""
     kwargs = kwargs or {}
-    last_error: BaseException | None = None
+    errors: list[Exception] = []
     for fb in fallbacks:
         try:
             if inspect.iscoroutinefunction(fb):
@@ -21,10 +30,10 @@ async def run_fallback_chain_async(
             else:
                 return fb(*args, **kwargs)
         except Exception as e:
-            last_error = e
+            errors.append(e)
             continue
-    if last_error is not None:
-        raise last_error
+    if errors:
+        raise FallbackChainError(errors)
     raise RuntimeError("No fallbacks provided")
 
 
@@ -35,13 +44,13 @@ def run_fallback_chain(
 ) -> Any:
     """Run fallback functions in order. Returns first success or raises last error."""
     kwargs = kwargs or {}
-    last_error: BaseException | None = None
+    errors: list[Exception] = []
     for fb in fallbacks:
         try:
             return fb(*args, **kwargs)
         except Exception as e:
-            last_error = e
+            errors.append(e)
             continue
-    if last_error is not None:
-        raise last_error
+    if errors:
+        raise FallbackChainError(errors)
     raise RuntimeError("No fallbacks provided")

@@ -7,9 +7,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from retryly.circuit import CircuitState
-
-
 class EventType(enum.Enum):
     RETRY_ATTEMPT = "retry_attempt"
     RETRY_SUCCESS = "retry_success"
@@ -31,7 +28,7 @@ class RetryEvent:
     wait_time: float = 0.0
     error: Optional[BaseException] = None
     error_type: Optional[str] = None
-    circuit_state: Optional[CircuitState] = None
+    circuit_state: Any = None
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
