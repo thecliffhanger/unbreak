@@ -1,6 +1,16 @@
 # unbreak
 
+[![PyPI version](https://badge.fury.io/py/unbreak.svg)](https://pypi.org/project/unbreak)
+[![Python versions](https://img.shields.io/pypi/pyversions/unbreak.svg)](https://pypi.org/project/unbreak)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Smart retry library with adaptive backoff, circuit breaker, fallback chains, and dead letter queues.
+
+## Install
+
+```bash
+pip install unbreak
+```
 
 ## Quick Start
 
@@ -40,3 +50,11 @@ def call_api():
 - **Retry history**: per-call timeline tracking
 - **Async support**: full asyncio support
 - **Zero dependencies**: stdlib only
+
+## License
+
+MIT
+
+---
+
+Part of the [thecliffhanger](https://github.com/thecliffhanger) open source suite.
