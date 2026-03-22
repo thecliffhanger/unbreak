@@ -1,4 +1,4 @@
-"""Adversarial/fuzz tests for retryly — edge cases, concurrency, corruption, type errors."""
+"""Adversarial/fuzz tests for unbreak — edge cases, concurrency, corruption, type errors."""
 
 import asyncio
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from retryly import (
+from unbreak import (
     retry,
     AdaptiveBackoff,
     CircuitBreaker,
@@ -216,7 +216,7 @@ class TestDeadLetterEdgeCases:
             f.write('{"function_name": "bar", "args": [], "kwargs": {}, "error": "e", "error_type": "E", "timestamp": 2.0, "retry_count": 2, "total_wait_time": 0.0}\n')
             path = f.name
 
-        from retryly.dead_letter import FileBackend
+        from unbreak.dead_letter import FileBackend
         try:
             backend = FileBackend(path)
             # Corrupt line should be skipped, valid lines returned
@@ -236,11 +236,11 @@ class TestDeadLetterEdgeCases:
             path = ro_dir / "dlq.jsonl"
 
             try:
-                from retryly.dead_letter import FileBackend
+                from unbreak.dead_letter import FileBackend
                 backend = FileBackend(str(path))
                 entry = backend.read_all.__self__  # just access to trigger init
                 # The write should fail
-                from retryly.dead_letter import DeadLetterEntry
+                from unbreak.dead_letter import DeadLetterEntry
                 entry = DeadLetterEntry(
                     function_name="test", args=(), kwargs={}, error="e",
                     error_type="E", timestamp=1.0, retry_count=1, total_wait_time=0.0,
@@ -434,7 +434,7 @@ class TestAsyncEdgeCases:
         async def fail():
             raise ConnectionError("main")
 
-        from retryly.fallback import FallbackChainError
+        from unbreak.fallback import FallbackChainError
         with pytest.raises(FallbackChainError):
             await fail()
 
@@ -487,7 +487,7 @@ class TestFallbackEdgeCases:
         def fail():
             raise ConnectionError("main")
 
-        from retryly.fallback import FallbackChainError
+        from unbreak.fallback import FallbackChainError
         with pytest.raises(FallbackChainError):
             fail()
 
@@ -548,12 +548,12 @@ class TestTypeErrors:
 
     def test_negative_base(self):
         """Negative base should raise ValueError."""
-        from retryly.backoff import ExponentialBackoff
+        from unbreak.backoff import ExponentialBackoff
         with pytest.raises(ValueError, match="must be > 0"):
             ExponentialBackoff(base=-1.0, factor=2.0, max_delay=60.0)
 
     def test_zero_base(self):
-        from retryly.backoff import ExponentialBackoff
+        from unbreak.backoff import ExponentialBackoff
         with pytest.raises(ValueError, match="must be > 0"):
             ExponentialBackoff(base=0.0, factor=2.0, max_delay=60.0)
 

@@ -9,15 +9,15 @@ import time
 from datetime import timedelta
 from typing import Any, Callable, Sequence, Union
 
-from retryly.backoff import BackoffStrategy, AdaptiveBackoff, get_backoff
-from retryly.budget import BudgetManager, parse_budget
-from retryly.circuit import CircuitBreaker
-from retryly.dead_letter import DeadLetterQueue
-from retryly.errors import get_retry_after, is_retryable
-from retryly.events import EventDispatcher, EventType, RetryEvent
-from retryly.fallback import run_fallback_chain, run_fallback_chain_async, FallbackChainError
-from retryly.history import RetryHistory
-from retryly.jitter import apply_jitter, coordinated_jitter
+from unbreak.backoff import BackoffStrategy, AdaptiveBackoff, get_backoff
+from unbreak.budget import BudgetManager, parse_budget
+from unbreak.circuit import CircuitBreaker
+from unbreak.dead_letter import DeadLetterQueue
+from unbreak.errors import get_retry_after, is_retryable
+from unbreak.events import EventDispatcher, EventType, RetryEvent
+from unbreak.fallback import run_fallback_chain, run_fallback_chain_async, FallbackChainError
+from unbreak.history import RetryHistory
+from unbreak.jitter import apply_jitter, coordinated_jitter
 
 
 class RetryResult:

@@ -2,7 +2,7 @@
 
 import time
 import pytest
-from retryly.history import RetryHistory, RetryTimeline
+from unbreak.history import RetryHistory, RetryTimeline
 
 
 class TestRetryHistory:

@@ -1,7 +1,7 @@
 """Tests for fallback chains."""
 
 import pytest
-from retryly.fallback import run_fallback_chain, run_fallback_chain_async
+from unbreak.fallback import run_fallback_chain, run_fallback_chain_async
 
 
 class TestFallbackChain:
@@ -18,7 +18,7 @@ class TestFallbackChain:
             raise ValueError("e1")
         def fail2(*a, **kw):
             raise TypeError("e2")
-        from retryly.fallback import FallbackChainError
+        from unbreak.fallback import FallbackChainError
         with pytest.raises(FallbackChainError):
             run_fallback_chain([fail1, fail2])
 

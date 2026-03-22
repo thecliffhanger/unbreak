@@ -4,9 +4,9 @@ import asyncio
 import tempfile
 import os
 import pytest
-from retryly.retry import retry, CircuitBreakerOpenError
-from retryly.circuit import CircuitBreaker
-from retryly.events import EventType
+from unbreak.retry import retry, CircuitBreakerOpenError
+from unbreak.circuit import CircuitBreaker
+from unbreak.events import EventType
 
 
 class TestRetryCircuitFallbackDLQ:

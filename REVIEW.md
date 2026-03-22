@@ -1,4 +1,4 @@
-# retryly Code Review
+# unbreak Code Review
 
 ## Summary
 
@@ -164,7 +164,7 @@ Negative or zero `base`, `delay`, `factor`, `max_delay` will produce nonsensical
 
 ### 13. `CircuitBreakerOpenError` not exported
 
-**File:** `retry/retry.py` defines it, `__init__.py` doesn't export it. Users can't catch it by name without importing from `retryly.retry`.
+**File:** `retry/retry.py` defines it, `__init__.py` doesn't export it. Users can't catch it by name without importing from `unbreak.retry`.
 
 ### 14. `AdaptiveBackoff.compute()` uses `id(self)` — shared across all functions
 

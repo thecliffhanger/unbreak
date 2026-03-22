@@ -1,7 +1,7 @@
 """Tests for event emission."""
 
 import pytest
-from retryly.events import EventType, RetryEvent, EventDispatcher
+from unbreak.events import EventType, RetryEvent, EventDispatcher
 
 
 class TestRetryEvent:

@@ -1,7 +1,7 @@
 """Tests for coordinated jitter."""
 
 import pytest
-from retryly.jitter import apply_jitter, coordinated_jitter
+from unbreak.jitter import apply_jitter, coordinated_jitter
 
 
 class TestApplyJitter:

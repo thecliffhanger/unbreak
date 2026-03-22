@@ -1,28 +1,28 @@
-# retryly
+# unbreak
 
 Smart retry library with adaptive backoff, circuit breaker, fallback chains, and dead letter queues.
 
 ## Quick Start
 
 ```python
-import retryly
+import unbreak
 
-@retryly.retry(max=5, backoff="exponential")
+@unbreak.retry(max=5, backoff="exponential")
 def call_api():
     ...
 
 # With circuit breaker
-@retryly.retry(max=5, circuit=True)
+@unbreak.retry(max=5, circuit=True)
 def call_api():
     ...
 
 # Time budget mode
-@retryly.retry(budget="30s")
+@unbreak.retry(budget="30s")
 def call_api():
     ...
 
 # Fallback chain
-@retryly.retry(max=3, fallback=[redis_get, db_query, lambda: "default"])
+@unbreak.retry(max=3, fallback=[redis_get, db_query, lambda: "default"])
 def call_api():
     ...
 ```

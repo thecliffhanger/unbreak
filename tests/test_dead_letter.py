@@ -4,7 +4,7 @@ import json
 import os
 import pytest
 import tempfile
-from retryly.dead_letter import DeadLetterQueue, InMemoryBackend, FileBackend, replay
+from unbreak.dead_letter import DeadLetterQueue, InMemoryBackend, FileBackend, replay
 
 
 class TestInMemoryBackend:

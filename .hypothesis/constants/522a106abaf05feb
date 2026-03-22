@@ -1,0 +1,4 @@
+# file: /Volumes/Teja_T7_M4/clawd/unbreak/src/unbreak/retry.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.3, 0.5, 1.0, 2.0, 60.0, 'elapsed', 'entry', 'equal', 'errors', 'exponential', 'reason', 'retries', 'timeline', 'total_wait']

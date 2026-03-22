@@ -14,7 +14,7 @@ import pytest
 from hypothesis import given, settings, strategies as st
 import socket
 
-from retryly import (
+from unbreak import (
     retry, RetryResult, CircuitBreakerOpenError,
     ExponentialBackoff, FixedBackoff, AdaptiveBackoff,
     CircuitBreaker, CircuitState,

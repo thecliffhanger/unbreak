@@ -3,7 +3,7 @@
 import time
 import pytest
 from datetime import timedelta
-from retryly.budget import parse_budget, BudgetManager
+from unbreak.budget import parse_budget, BudgetManager
 
 
 class TestParseBudget:

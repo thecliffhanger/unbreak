@@ -2,8 +2,8 @@
 
 import asyncio
 import pytest
-from retryly.retry import retry, RetryResult, CircuitBreakerOpenError
-from retryly.circuit import CircuitBreaker
+from unbreak.retry import retry, RetryResult, CircuitBreakerOpenError
+from unbreak.circuit import CircuitBreaker
 
 
 class TestBasicRetry:
@@ -199,7 +199,7 @@ class TestEventIntegration:
         with pytest.raises(ConnectionError):
             fn()
         types = [e.type for e in events]
-        from retryly.events import EventType
+        from unbreak.events import EventType
         assert EventType.RETRY_ATTEMPT in types
         assert EventType.RETRY_EXHAUSTED in types
 

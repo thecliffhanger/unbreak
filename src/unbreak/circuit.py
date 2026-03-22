@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from retryly.events import EventDispatcher, EventType, RetryEvent
+from unbreak.events import EventDispatcher, EventType, RetryEvent
 
 
 class CircuitState(enum.Enum):

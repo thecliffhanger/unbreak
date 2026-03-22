@@ -2,7 +2,7 @@
 
 import time
 import pytest
-from retryly.circuit import CircuitBreaker, CircuitState
+from unbreak.circuit import CircuitBreaker, CircuitState
 
 
 class TestCircuitBreakerBasics:

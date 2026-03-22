@@ -2,7 +2,7 @@
 
 import socket
 import pytest
-from retryly.errors import is_retryable, register_retryable, unregister_retryable, clear_custom_retryable, get_retry_after
+from unbreak.errors import is_retryable, register_retryable, unregister_retryable, clear_custom_retryable, get_retry_after
 
 
 class TestNetworkErrors:

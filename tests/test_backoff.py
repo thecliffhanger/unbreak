@@ -1,7 +1,7 @@
 """Tests for backoff strategies."""
 
 import pytest
-from retryly.backoff import FixedBackoff, ExponentialBackoff, AdaptiveBackoff, get_backoff
+from unbreak.backoff import FixedBackoff, ExponentialBackoff, AdaptiveBackoff, get_backoff
 
 
 class TestFixedBackoff:
@@ -80,21 +80,21 @@ class TestGetBackoff:
 
 class TestJitterIntegration:
     def test_with_full_jitter(self):
-        from retryly.jitter import apply_jitter
+        from unbreak.jitter import apply_jitter
         b = ExponentialBackoff(base=1.0, factor=2.0)
         for i in range(1, 5):
             d = apply_jitter(b.compute(i), "full")
             assert 0 <= d <= b.compute(i) * 2  # some tolerance
 
     def test_with_equal_jitter(self):
-        from retryly.jitter import apply_jitter
+        from unbreak.jitter import apply_jitter
         b = FixedBackoff(delay=2.0)
         for _ in range(10):
             d = apply_jitter(b.compute(1), "equal")
             assert 0.5 <= d <= 4.0  # 0.5x to 1.5x
 
     def test_no_jitter(self):
-        from retryly.jitter import apply_jitter
+        from unbreak.jitter import apply_jitter
         b = FixedBackoff(delay=1.0)
         assert apply_jitter(b.compute(1), None) == 1.0
         assert apply_jitter(b.compute(1), "none") == 1.0
